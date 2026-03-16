@@ -1,0 +1,35 @@
+vpc_id             = "vpc-xxxxx"
+private_subnet_ids = ["subnet-xxx", "subnet-yyy", "subnet-zzz"]
+public_subnet_ids  = ["subnet-aaa", "subnet-bbb"]
+environment        = "dev"
+
+# HTTPS and Route 53 (required; uncomment and set; zone must already exist)
+acm_certificate_arn = "arn:aws:acm:REGION:ACCOUNT:certificate/xxxxx"
+route53_zone_id     = "Z1234567890ABCDEF"
+route53_record_name = "grafana" # or FQDN e.g. grafana.example.com
+
+# Optional: CIDRs allowed to reach the ALB on 80/443 (if set, deployer IP is not used)
+# alb_ingress_cidrs = ["10.0.0.0/8", "192.168.1.0/24"]
+
+# EC2 instance (access via SSM Session Manager only; no SSH key)
+instance_type = "t3.small"
+
+# Grafana (default: grafana/grafana:10.4.0 on port 3000)
+# grafana_image = "grafana/grafana:10.4.0"
+# grafana_port  = 3000
+
+# Optional: set admin password. Stored in SSM Parameter Store and read at instance boot. Leave unset for default admin/admin.
+# grafana_admin_password = "..."
+
+# Optional: create Cognito users; Terraform adds each to the group and Cognito sends a welcome email. Groups: grafana-admins, grafana-editors, grafana-viewers.
+# cognito_users = {
+#   "grafana-admins" = [
+#     { email = "admin@example.com", name = "Admin User" }
+#   ]
+#   "grafana-editors" = [
+#     { email = "editor@example.com", name = "Editor" }
+#   ]
+#   "grafana-viewers" = [
+#     { email = "viewer@example.com" }
+#   ]
+# }
