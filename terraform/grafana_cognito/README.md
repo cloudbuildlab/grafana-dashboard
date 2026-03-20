@@ -19,9 +19,19 @@ Terraform stack that runs **Grafana on ECS** behind an **Application Load Balanc
 
 ## Auth process
 
-Cognito is the OIDC provider; Grafana uses Generic OAuth. A Pre Token Generation Lambda adds a `grafana_role` claim to the ID token from Cognito group membership; Grafana reads that claim for RBAC (strict mode: no role = login denied).
+Grafana uses **Generic OAuth** against Cognito. The browser gets a redirect to Cognito, then back with an **authorization code**. Grafana exchanges the code for tokens on the server.
 
-**Flow:**
+Cognito runs a **Pre Token Generation** Lambda before issuing the **ID token**. The Lambda reads the user’s Cognito groups and writes one claim, **`grafana_role`**, using `claimsToAddOrOverride`. Grafana reads **`grafana_role`** from the ID token and maps it to its org role. **Strict mode** rejects logins when **`grafana_role`** is empty.
+
+**Group → role (one row per group):**
+
+| Cognito group | `grafana_role` in ID token | Grafana org role |
+| --- | --- | --- |
+| `grafana-admins` | `Admin` | Admin |
+| `grafana-editors` | `Editor` | Editor |
+| `grafana-viewers` | `Viewer` | Viewer |
+
+### Cognito only (no Azure)
 
 ```mermaid
 sequenceDiagram
@@ -30,50 +40,119 @@ sequenceDiagram
     participant Cognito
     participant PreTokenLambda
 
-    User->>Grafana: GET / (or click "Login with Cognito")
-    Grafana->>User: 302 to Cognito /oauth2/authorize
+    User->>Grafana: Start login
+    Grafana->>User: Redirect Cognito /oauth2/authorize
     Note over Grafana,Cognito: client_id, redirect_uri=/login/generic_oauth, scope=openid profile email
 
-    User->>Cognito: Authorize (login if needed)
-    Cognito->>Cognito: Resolve user + groups
+    User->>Cognito: Sign in on hosted UI
+    Cognito->>Cognito: Load user and Cognito groups
 
-    Cognito->>PreTokenLambda: Pre Token Generation (event with groups)
-    PreTokenLambda->>PreTokenLambda: groups → grafana_role (Admin/Editor/Viewer)
-    PreTokenLambda->>Cognito: event + claimsOverrideDetails.grafana_role
+    Cognito->>PreTokenLambda: Pre Token Generation
+    PreTokenLambda->>Cognito: Set grafana_role via claimsToAddOrOverride
 
-    Cognito->>Cognito: Build ID token with claim grafana_role
-    Cognito->>User: 302 to Grafana /login/generic_oauth?code=...
+    Cognito->>Cognito: Build ID token with grafana_role
+    Cognito->>User: Redirect Grafana /login/generic_oauth with code
 
     User->>Grafana: GET /login/generic_oauth?code=...
-    Grafana->>Cognito: POST /oauth2/token (code + client_secret)
-    Cognito->>Grafana: id_token, access_token, refresh_token
+    Grafana->>Cognito: POST /oauth2/token
+    Cognito->>Grafana: id_token and tokens
 
-    Grafana->>Grafana: Decode id_token, read grafana_role
-    Note over Grafana: Strict mode: no role → deny
-    Grafana->>User: 302 / or "Login denied"
+    Grafana->>Grafana: Read grafana_role from id_token
+    Grafana->>User: Session
 ```
 
-**Role from groups:**
+| Step | What |
+| --- | --- |
+| 1 | Grafana redirects the browser to Cognito `/oauth2/authorize` with the OAuth client and scopes. |
+| 2 | User signs in on the Cognito hosted UI. |
+| 3 | Cognito loads the user’s Cognito group membership. |
+| 4 | Cognito invokes the Pre Token Lambda. The Lambda sets **`grafana_role`** from the table above. |
+| 5 | Cognito issues the ID token containing **`grafana_role`** and redirects to Grafana with the **`code`**. |
+| 6 | Grafana calls **`POST /oauth2/token`** with the **`code`** and client secret. |
+| 7 | Grafana reads **`grafana_role`** from the **`id_token`** and opens a session. |
 
 ```mermaid
 flowchart LR
     subgraph cognito [Cognito]
-        Groups["User groups\n(grafana-admins / editors / viewers)"]
-        Lambda["Pre Token Lambda"]
-        Token["ID token"]
+        G[grafana-admins / editors / viewers]
+        L[Pre Token Lambda]
+        T[ID token with grafana_role]
     end
-    Groups --> Lambda
-    Lambda -->|"claimsToAddOrOverride.grafana_role"| Token
-    Token -->|"Grafana reads claim"| Grafana["Grafana RBAC\n(Admin / Editor / Viewer)"]
+    G --> L --> T --> GF[Grafana org role]
 ```
 
-| Step | Where | What |
-| ---- | ------ | ---- |
-| 1–2 | Grafana | Generic OAuth redirects to Cognito `/oauth2/authorize` with client_id, redirect_uri, scopes. |
-| 3–4 | Cognito | User signs in; Cognito resolves user and groups. |
-| 5–6 | Pre Token Lambda | Cognito invokes Lambda with groups; Lambda sets `grafana_role` (Admin/Editor/Viewer) in `claimsToAddOrOverride`. |
-| 7 | Cognito | ID token is issued with `grafana_role`; redirect to Grafana with auth code. |
-| 8–9 | Grafana | Exchanges code for tokens, reads `grafana_role` from ID token, applies RBAC; strict mode denies if role is missing. |
+Strict mode denies login when **`grafana_role`** is missing on the token.
+
+### Cognito + Azure AD (Enterprise app, SAML)
+
+Grafana still uses **only** Cognito for OAuth. Azure is a **SAML IdP** on the Cognito user pool. After Microsoft sign-in, Cognito continues with the same Pre Token Lambda and **`grafana_role`** flow as above.
+
+SAML **group claims** from Azure map to Cognito group membership (**`grafana-admins`**, **`grafana-editors`**, **`grafana-viewers`**). The Pre Token Lambda uses that membership and the same **`grafana_role`** table as above.
+
+This Terraform stack does not create the Azure enterprise app or the SAML IdP in Cognito.
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant Grafana
+    participant Cognito
+    participant AzureAD as Azure AD SAML app
+    participant PreTokenLambda
+
+    User->>Grafana: Start login
+    Grafana->>User: Redirect Cognito /oauth2/authorize
+
+    User->>Cognito: Cognito hosted UI
+    Cognito->>User: Redirect Azure SAML sign-on
+
+    User->>AzureAD: Sign in at Microsoft
+    AzureAD->>User: SAML response to Cognito ACS
+    User->>Cognito: Browser posts SAML to Cognito
+
+    Cognito->>Cognito: Validate SAML, federated user, Cognito groups from claim mapping
+
+    Cognito->>PreTokenLambda: Pre Token Generation
+    PreTokenLambda->>Cognito: Set grafana_role via claimsToAddOrOverride
+
+    Cognito->>Cognito: Build ID token with grafana_role
+    Cognito->>User: Redirect Grafana /login/generic_oauth with code
+
+    User->>Grafana: GET /login/generic_oauth?code=...
+    Grafana->>Cognito: POST /oauth2/token
+    Cognito->>Grafana: id_token and tokens
+
+    Grafana->>Grafana: Read grafana_role from id_token
+    Grafana->>User: Session
+```
+
+| Step | What |
+| --- | --- |
+| 1 | Grafana redirects to Cognito `/oauth2/authorize`. |
+| 2 | Cognito redirects the browser to the Azure enterprise app SAML sign-on. |
+| 3 | User signs in at Microsoft. Azure returns a SAML response to Cognito. |
+| 4 | Cognito validates SAML and sets Cognito groups from the mapped group claim. |
+| 5 | Cognito invokes the Pre Token Lambda. The Lambda sets **`grafana_role`** from the table above. |
+| 6 | Cognito issues the ID token containing **`grafana_role`** and redirects to Grafana with the **`code`**. |
+| 7 | Grafana **`POST /oauth2/token`** with the **`code`** and client secret. |
+| 8 | Grafana reads **`grafana_role`** from the **`id_token`** and opens a session. |
+
+```mermaid
+flowchart LR
+    subgraph entra [Entra ID]
+        A[Enterprise SAML app + group claim]
+    end
+    subgraph cognito [Cognito]
+        S[SAML federation]
+        G[grafana-admins / editors / viewers]
+        L[Pre Token Lambda]
+        T[ID token with grafana_role]
+    end
+    A --> S --> G --> L --> T --> GF[Grafana org role]
+```
+
+Strict mode denies login when **`grafana_role`** is missing on the token.
+
+Docs: [Cognito SAML IdP](https://docs.aws.amazon.com/cognito/latest/developerguide/cognito-user-pools-saml-idp.html), [Entra enterprise apps](https://learn.microsoft.com/en-us/entra/identity/applications-apps-how-managed).
 
 ## Prerequisites
 
