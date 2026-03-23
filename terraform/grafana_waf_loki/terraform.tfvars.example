@@ -1,0 +1,30 @@
+ecs_cluster_arn    = "arn:aws:ecs:REGION:ACCOUNT:cluster/YOUR_CLUSTER"
+vpc_id             = "vpc-xxxxx"
+private_subnet_ids = ["subnet-xxx", "subnet-yyy", "subnet-zzz"]
+public_subnet_ids  = ["subnet-aaa", "subnet-bbb"]
+environment        = "dev"
+desired_count      = 1
+
+# WAF log bucket — must already exist (and receive WAFv2 delivery if you use web_acl_arn).
+waf_logs_bucket_name   = "aws-waf-logs-your-account"
+waf_logs_prefix        = "AWSLogs/"
+waf_logs_object_suffix = ".gz"
+
+# Optional: enable WAFv2 logging to the bucket
+# web_acl_arn = "arn:aws:wafv2:REGION:ACCOUNT:regional/webacl/YOUR-ACL/UUID"
+
+# Optional: CIDRs allowed to reach the ALB (if set, deployer IP is not used)
+# alb_ingress_cidrs = ["10.0.0.0/8", "192.168.1.0/24"]
+
+# Grafana / Loki / Promtail images (pin tags for production)
+# grafana_image  = "grafana/grafana:latest"
+# grafana_port   = 3000
+# loki_image     = "grafana/loki:latest"
+# promtail_image = "grafana/promtail:latest"
+
+# Optional: Grafana admin password in SSM (else admin/admin)
+# grafana_admin_password = "..."
+
+tags = {
+  Project = "grafana_waf_loki"
+}
