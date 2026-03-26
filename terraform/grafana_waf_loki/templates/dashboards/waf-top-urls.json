@@ -1,6 +1,6 @@
 {
   "id": null,
-  "title": "WAF Top URLs",
+  "title": "WAF top URLs",
   "uid": "waf-top-urls",
   "schemaVersion": 39,
   "version": 1,
@@ -118,7 +118,7 @@
           "editorMode": "code",
           "expr": "topk(${top_n}, sum by (httpRequest_uri) (count_over_time({source=\"waf\", bucket=~\"${bucket:regex}\"} | json | waf_acl=~\"${waf_acl:regex}\" | httpRequest_uri != \"\" [5m])))",
           "queryType": "instant",
-          "format": "table",
+          "format": "time_series",
           "legendFormat": "{{httpRequest_uri}}"
         }
       ],
@@ -166,25 +166,38 @@
       },
       "transformations": [
         {
-          "id": "labelsToFields",
+          "id": "seriesToRows",
+          "options": {}
+        },
+        {
+          "id": "groupBy",
           "options": {
-            "mode": "columns"
+            "fields": {
+              "Metric": {
+                "operation": "groupby"
+              },
+              "Value": {
+                "operation": "aggregate",
+                "aggregations": [
+                  "sum"
+                ]
+              }
+            }
           }
         },
         {
           "id": "organize",
           "options": {
             "excludeByName": {
-              "Time": true,
-              "bucket": true,
-              "waf_acl": true
+              "Time": true
             },
             "indexByName": {
-              "httpRequest_uri": 0,
-              "Value": 1
+              "Metric": 0,
+              "Value (sum)": 1
             },
             "renameByName": {
-              "httpRequest_uri": "Path",
+              "Metric": "Path",
+              "Value (sum)": "Requests",
               "Value": "Requests",
               "Value #A": "Requests"
             }
