@@ -13,10 +13,9 @@ data "aws_s3_bucket" "waf_logs" {
   bucket = var.waf_logs_bucket_name
 }
 
-# Deployment artifact for the WAF ingest Lambda.
-data "archive_file" "waf_zip" {
+# Bootstrap bucket change → ECS rollout Lambda (Python, no extra deps).
+data "archive_file" "bootstrap_roll_zip" {
   type        = "zip"
-  source_dir  = "${path.module}/lambda"
-  output_path = "${path.module}/.build/waf.zip"
-  excludes    = ["node_modules/**"]
+  source_file = "${path.module}/lambda/bootstrap_roll/handler.py"
+  output_path = "${path.module}/.build/bootstrap_roll.zip"
 }

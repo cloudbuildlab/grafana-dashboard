@@ -46,11 +46,18 @@ resource "aws_iam_role" "ecs_task" {
 }
 
 # Bootstrap init container uses task-role credentials to sync from S3.
+# Loki ruler also needs PutObject/DeleteObject to persist recording rule state.
 data "aws_iam_policy_document" "ecs_task_bootstrap_s3" {
   statement {
     effect    = "Allow"
     actions   = ["s3:GetObject", "s3:ListBucket"]
     resources = [aws_s3_bucket.bootstrap.arn, "${aws_s3_bucket.bootstrap.arn}/*"]
+  }
+
+  statement {
+    effect    = "Allow"
+    actions   = ["s3:PutObject", "s3:DeleteObject"]
+    resources = ["${aws_s3_bucket.bootstrap.arn}/loki/*"]
   }
 }
 
@@ -60,31 +67,175 @@ resource "aws_iam_role_policy" "ecs_task_bootstrap_s3" {
   policy = data.aws_iam_policy_document.ecs_task_bootstrap_s3.json
 }
 
+# Grafana task: mount EFS (read + write for bootstrap to populate provisioning dirs).
+data "aws_iam_policy_document" "ecs_task_efs" {
+  statement {
+    effect = "Allow"
+    actions = [
+      "elasticfilesystem:ClientMount",
+      "elasticfilesystem:ClientWrite",
+    ]
+    resources = [
+      aws_efs_file_system.grafana.arn,
+      aws_efs_access_point.grafana.arn,
+    ]
+  }
+}
+
+resource "aws_iam_role_policy" "ecs_task_efs" {
+  name   = "${var.environment}-${local.app_name}-efs"
+  role   = aws_iam_role.ecs_task.id
+  policy = data.aws_iam_policy_document.ecs_task_efs.json
+}
+
+# ECS infrastructure role used by ECS to manage task-attached EBS volumes.
+resource "aws_iam_role" "ecs_ebs" {
+  name = "${var.environment}-${local.app_name}-ecs-ebs"
+
+  assume_role_policy = jsonencode({
+    Version   = "2012-10-17"
+    Statement = [{ Effect = "Allow", Principal = { Service = "ecs.amazonaws.com" }, Action = "sts:AssumeRole" }]
+  })
+
+  tags = merge(var.tags, { Name = "${var.environment}-${local.app_name}-ecs-ebs" })
+}
+
+resource "aws_iam_role_policy_attachment" "ecs_ebs_volumes" {
+  role       = aws_iam_role.ecs_ebs.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSInfrastructureRolePolicyForVolumes"
+}
+
 # -----------------------------------------------------------------------------
-# IAM — WAF Lambda execution role
+# IAM — Dashboard sync task (separate RunTask, not a service)
 # -----------------------------------------------------------------------------
-resource "aws_iam_role" "waf_lambda" {
-  name = "${var.environment}-${local.app_name}-waf-lambda"
+resource "aws_iam_role" "sync_task_execution" {
+  name = "${var.environment}-${local.app_name}-sync-execution"
+
+  assume_role_policy = jsonencode({
+    Version   = "2012-10-17"
+    Statement = [{ Effect = "Allow", Principal = { Service = "ecs-tasks.amazonaws.com" }, Action = "sts:AssumeRole" }]
+  })
+
+  tags = merge(var.tags, { Name = "${var.environment}-${local.app_name}-sync-execution" })
+}
+
+resource "aws_iam_role_policy_attachment" "sync_task_execution" {
+  role       = aws_iam_role.sync_task_execution.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
+}
+
+resource "aws_iam_role" "sync_task" {
+  name = "${var.environment}-${local.app_name}-sync-task"
+
+  assume_role_policy = jsonencode({
+    Version   = "2012-10-17"
+    Statement = [{ Effect = "Allow", Principal = { Service = "ecs-tasks.amazonaws.com" }, Action = "sts:AssumeRole" }]
+  })
+
+  tags = merge(var.tags, { Name = "${var.environment}-${local.app_name}-sync-task" })
+}
+
+data "aws_iam_policy_document" "sync_task_inline" {
+  statement {
+    effect    = "Allow"
+    actions   = ["s3:GetObject", "s3:ListBucket"]
+    resources = [aws_s3_bucket.bootstrap.arn, "${aws_s3_bucket.bootstrap.arn}/*"]
+  }
+
+  statement {
+    effect = "Allow"
+    actions = [
+      "elasticfilesystem:ClientMount",
+      "elasticfilesystem:ClientWrite",
+    ]
+    resources = [
+      aws_efs_file_system.grafana.arn,
+      aws_efs_access_point.grafana.arn,
+    ]
+  }
+}
+
+resource "aws_iam_role_policy" "sync_task_inline" {
+  name   = "s3-efs"
+  role   = aws_iam_role.sync_task.id
+  policy = data.aws_iam_policy_document.sync_task_inline.json
+}
+
+# Lambda that invokes the sync RunTask on dashboard S3 events.
+resource "aws_iam_role" "dashboard_sync_lambda" {
+  name = "${var.environment}-${local.app_name}-dashboard-sync-lambda"
 
   assume_role_policy = jsonencode({
     Version   = "2012-10-17"
     Statement = [{ Effect = "Allow", Principal = { Service = "lambda.amazonaws.com" }, Action = "sts:AssumeRole" }]
   })
 
-  tags = merge(var.tags, { Name = "${var.environment}-${local.app_name}-waf-lambda" })
+  tags = merge(var.tags, { Name = "${var.environment}-${local.app_name}-dashboard-sync-lambda" })
 }
 
-resource "aws_iam_role_policy_attachment" "waf_lambda_basic" {
-  role       = aws_iam_role.waf_lambda.name
+resource "aws_iam_role_policy_attachment" "dashboard_sync_lambda_basic" {
+  role       = aws_iam_role.dashboard_sync_lambda.name
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
 }
 
-resource "aws_iam_role_policy_attachment" "waf_lambda_vpc" {
-  role       = aws_iam_role.waf_lambda.name
-  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole"
+data "aws_iam_policy_document" "dashboard_sync_lambda_ecs" {
+  # RunTask must be allowed for every revision; a pinned :N ARN breaks after each task-def replace.
+  statement {
+    effect    = "Allow"
+    actions   = ["ecs:RunTask"]
+    resources = ["${aws_ecs_task_definition.grafana_sync.arn_without_revision}:*"]
+  }
+
+  statement {
+    effect    = "Allow"
+    actions   = ["ecs:DescribeTasks"]
+    resources = ["*"]
+  }
+
+  statement {
+    effect    = "Allow"
+    actions   = ["iam:PassRole"]
+    resources = [aws_iam_role.sync_task_execution.arn, aws_iam_role.sync_task.arn]
+  }
 }
 
-data "aws_iam_policy_document" "waf_lambda_inline" {
+resource "aws_iam_role_policy" "dashboard_sync_lambda_ecs" {
+  name   = "ecs-run-task"
+  role   = aws_iam_role.dashboard_sync_lambda.id
+  policy = data.aws_iam_policy_document.dashboard_sync_lambda_ecs.json
+}
+
+# -----------------------------------------------------------------------------
+# IAM — WAF worker execution + task roles
+# -----------------------------------------------------------------------------
+resource "aws_iam_role" "waf_worker_execution" {
+  name = "${var.environment}-${local.app_name}-waf-worker-execution"
+
+  assume_role_policy = jsonencode({
+    Version   = "2012-10-17"
+    Statement = [{ Effect = "Allow", Principal = { Service = "ecs-tasks.amazonaws.com" }, Action = "sts:AssumeRole" }]
+  })
+
+  tags = merge(var.tags, { Name = "${var.environment}-${local.app_name}-waf-worker-execution" })
+}
+
+resource "aws_iam_role_policy_attachment" "waf_worker_execution_ecs" {
+  role       = aws_iam_role.waf_worker_execution.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
+}
+
+resource "aws_iam_role" "waf_worker_task" {
+  name = "${var.environment}-${local.app_name}-waf-worker-task"
+
+  assume_role_policy = jsonencode({
+    Version   = "2012-10-17"
+    Statement = [{ Effect = "Allow", Principal = { Service = "ecs-tasks.amazonaws.com" }, Action = "sts:AssumeRole" }]
+  })
+
+  tags = merge(var.tags, { Name = "${var.environment}-${local.app_name}-waf-worker-task" })
+}
+
+data "aws_iam_policy_document" "waf_worker_inline" {
   statement {
     effect    = "Allow"
     actions   = ["s3:GetObject"]
@@ -103,8 +254,8 @@ data "aws_iam_policy_document" "waf_lambda_inline" {
   }
 }
 
-resource "aws_iam_role_policy" "waf_lambda_inline" {
+resource "aws_iam_role_policy" "waf_worker_inline" {
   name   = "s3-sqs"
-  role   = aws_iam_role.waf_lambda.id
-  policy = data.aws_iam_policy_document.waf_lambda_inline.json
+  role   = aws_iam_role.waf_worker_task.id
+  policy = data.aws_iam_policy_document.waf_worker_inline.json
 }

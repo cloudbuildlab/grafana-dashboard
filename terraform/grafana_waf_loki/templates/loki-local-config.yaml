@@ -1,0 +1,45 @@
+# Matches grafana/loki single-binary defaults under /etc/loki/local-config.yaml, with
+# explicit limits for high-cardinality WAF metric queries (per-URI, per-IP, etc.).
+auth_enabled: false
+
+server:
+  http_listen_port: 3100
+
+common:
+  instance_addr: 127.0.0.1
+  path_prefix: /loki
+  storage:
+    filesystem:
+      chunks_directory: /loki/chunks
+      rules_directory: /loki/rules
+  replication_factor: 1
+  ring:
+    kvstore:
+      store: inmemory
+
+limits_config:
+  max_query_series: 500000
+  metric_aggregation_enabled: true
+  # Default 1m is too low for heavy metric queries over WAF volume; avoids abrupt cancel mid-response.
+  query_timeout: 10m
+
+schema_config:
+  configs:
+    - from: 2020-10-24
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
+
+ruler:
+  # Use filesystem storage so the rule files bootstrap copies from S3 are found directly.
+  # Bootstrap places rules at /loki/rules/fake/waf.yaml before Loki starts.
+  storage:
+    type: local
+    local:
+      directory: /loki/rules
+  rule_path: /loki/rules-temp
+  enable_api: true
+  alertmanager_url: http://localhost:9093

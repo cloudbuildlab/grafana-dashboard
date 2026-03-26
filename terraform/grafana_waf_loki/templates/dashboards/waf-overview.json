@@ -1,11 +1,48 @@
 {
   "id": null,
-  "title": "WAF overview",
+  "title": "WAF Overview",
   "uid": "waf-overview",
   "schemaVersion": 39,
   "version": 1,
   "refresh": "30s",
   "time": { "from": "now-6h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "bucket",
+        "label": "Bucket",
+        "type": "query",
+        "datasource": { "type": "loki", "uid": "loki" },
+        "definition": "label_values({source=\"waf\"}, bucket)",
+        "query": "label_values({source=\"waf\"}, bucket)",
+        "refresh": 1,
+        "sort": 1,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".+",
+        "current": { "selected": true, "text": "All", "value": "$__all" },
+        "hide": 0,
+        "skipUrlSync": false
+      },
+      {
+        "name": "waf_acl",
+        "label": "Web ACL",
+        "description": "Matches JSON field waf_acl (Lambda). Stream selector uses bucket only so legacy streams still match; lines without waf_acl in JSON are excluded when a specific ACL is chosen. All uses .*.",
+        "type": "query",
+        "datasource": { "type": "loki", "uid": "loki" },
+        "definition": "label_values({source=\"waf\", bucket=~\"${bucket:regex}\"}, waf_acl)",
+        "query": "label_values({source=\"waf\", bucket=~\"${bucket:regex}\"}, waf_acl)",
+        "refresh": 1,
+        "sort": 1,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".*",
+        "current": { "selected": true, "text": "All", "value": "$__all" },
+        "hide": 0,
+        "skipUrlSync": false
+      }
+    ]
+  },
   "panels": [
     {
       "id": 1,
@@ -18,14 +55,18 @@
           "refId": "A",
           "datasource": { "type": "loki", "uid": "loki" },
           "editorMode": "code",
-          "expr": "sum(count_over_time({source=\"waf\"}[1m]))",
+          "expr": "sum(count_over_time({source=\"waf\", bucket=~\"${bucket:regex}\"} | json | waf_acl=~\"${waf_acl:regex}\" [1m]))",
           "queryType": "range",
           "legendFormat": "lines/min"
         }
       ],
       "fieldConfig": { "defaults": { "unit": "none" }, "overrides": [] },
       "options": {
-        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
         "tooltip": { "mode": "single" }
       }
     },
@@ -40,14 +81,18 @@
           "refId": "A",
           "datasource": { "type": "loki", "uid": "loki" },
           "editorMode": "code",
-          "expr": "sum by (action) (count_over_time({source=\"waf\"} | json | action != \"\" [1m]))",
+          "expr": "sum by (action) (count_over_time({source=\"waf\", bucket=~\"${bucket:regex}\"} | json | waf_acl=~\"${waf_acl:regex}\" | action != \"\" [1m]))",
           "queryType": "range",
           "legendFormat": "{{action}}"
         }
       ],
       "fieldConfig": { "defaults": {}, "overrides": [] },
       "options": {
-        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
         "tooltip": { "mode": "multi" }
       }
     },
@@ -63,14 +108,18 @@
           "refId": "A",
           "datasource": { "type": "loki", "uid": "loki" },
           "editorMode": "code",
-          "expr": "sum by (terminatingRuleId) (count_over_time({source=\"waf\"} | json | terminatingRuleId != \"\" [1m]))",
+          "expr": "sum by (terminatingRuleId) (count_over_time({source=\"waf\", bucket=~\"${bucket:regex}\"} | json | waf_acl=~\"${waf_acl:regex}\" | terminatingRuleId != \"\" [1m]))",
           "queryType": "range",
           "legendFormat": "{{terminatingRuleId}}"
         }
       ],
       "fieldConfig": { "defaults": {}, "overrides": [] },
       "options": {
-        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
         "tooltip": { "mode": "multi" }
       }
     },
@@ -85,14 +134,18 @@
           "refId": "A",
           "datasource": { "type": "loki", "uid": "loki" },
           "editorMode": "code",
-          "expr": "topk(10, sum by (clientIp) (count_over_time({source=\"waf\"} | regexp `\"clientIp\":\"(?P<clientIp>[^\"]+)\"` | clientIp != \"\" [1m])))",
+          "expr": "topk(10, sum by (clientIp) (count_over_time({source=\"waf\", bucket=~\"${bucket:regex}\"} | json | waf_acl=~\"${waf_acl:regex}\" | clientIp != \"\" [1m])))",
           "queryType": "range",
           "legendFormat": "{{clientIp}}"
         }
       ],
       "fieldConfig": { "defaults": {}, "overrides": [] },
       "options": {
-        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
         "tooltip": { "mode": "multi" }
       }
     },
@@ -107,29 +160,59 @@
           "refId": "A",
           "datasource": { "type": "loki", "uid": "loki" },
           "editorMode": "code",
-          "expr": "sum by (method) (count_over_time({source=\"waf\"} | regexp `\"httpMethod\":\"(?P<method>[A-Z]+)\"` | method != \"\" [1m]))",
+          "expr": "sum by (method) (count_over_time({source=\"waf\", bucket=~\"${bucket:regex}\"} | json | waf_acl=~\"${waf_acl:regex}\" | regexp `\"httpMethod\":\"(?P<method>[A-Z]+)\"` | method != \"\" [1m]))",
           "queryType": "range",
           "legendFormat": "{{method}}"
         }
       ],
       "fieldConfig": { "defaults": {}, "overrides": [] },
       "options": {
-        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
         "tooltip": { "mode": "multi" }
       }
     },
     {
-      "id": 6,
-      "type": "logs",
-      "title": "BLOCK only (quick triage)",
-      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 23 },
+      "id": 7,
+      "type": "timeseries",
+      "title": "By S3 source bucket",
+      "gridPos": { "h": 7, "w": 24, "x": 0, "y": 23 },
       "datasource": { "type": "loki", "uid": "loki" },
       "targets": [
         {
           "refId": "A",
           "datasource": { "type": "loki", "uid": "loki" },
           "editorMode": "code",
-          "expr": "{source=\"waf\"} | json | action=\"BLOCK\"",
+          "expr": "sum by (bucket) (count_over_time({source=\"waf\", bucket=~\"${bucket:regex}\"} | json | waf_acl=~\"${waf_acl:regex}\" [1m]))",
+          "queryType": "range",
+          "legendFormat": "{{bucket}}"
+        }
+      ],
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": { "mode": "multi" }
+      }
+    },
+    {
+      "id": 6,
+      "type": "logs",
+      "title": "Logs (bucket + Web ACL)",
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 30 },
+      "datasource": { "type": "loki", "uid": "loki" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "loki", "uid": "loki" },
+          "editorMode": "code",
+          "expr": "{source=\"waf\", bucket=~\"${bucket:regex}\"} | json | waf_acl=~\"${waf_acl:regex}\"",
           "queryType": "range"
         }
       ],

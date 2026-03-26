@@ -33,10 +33,3 @@ resource "aws_cloudwatch_log_group" "promtail" {
   tags = merge(var.tags, { Name = "/ecs/${var.environment}-${local.app_name}-promtail" })
 }
 
-resource "aws_cloudwatch_log_group" "waf_lambda" {
-  name              = "/aws/lambda/${var.environment}-${local.app_name}-waf"
-  retention_in_days = 14
-  skip_destroy      = false
-
-  tags = merge(var.tags, { Name = "/aws/lambda/${var.environment}-${local.app_name}-waf" })
-}

@@ -1,4 +1,5 @@
 .terraform/
 .build/
+lambda/waf/node_modules/
 *.tfvars
 !terraform.tfvars.example

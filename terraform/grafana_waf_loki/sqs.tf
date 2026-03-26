@@ -3,9 +3,9 @@
 # -----------------------------------------------------------------------------
 
 resource "aws_sqs_queue" "waf_ingest_dlq" {
-  name                       = "${local.stack_name}-waf-ingest-dlq"
-  message_retention_seconds  = 1209600 # 14 days
-  receive_wait_time_seconds  = 20
+  name                      = "${local.stack_name}-waf-ingest-dlq"
+  message_retention_seconds = 1209600 # 14 days
+  receive_wait_time_seconds = 20
 
   tags = merge(var.tags, { Name = "${local.stack_name}-waf-ingest-dlq" })
 }
@@ -13,8 +13,8 @@ resource "aws_sqs_queue" "waf_ingest_dlq" {
 resource "aws_sqs_queue" "waf_ingest" {
   name = "${local.stack_name}-waf-ingest"
 
-  # Visibility timeout must exceed the Lambda timeout (60 s) by a reasonable margin.
-  visibility_timeout_seconds = 75
+  # Worker polls continuously and ACKs only on successful push.
+  visibility_timeout_seconds = 300
   receive_wait_time_seconds  = 20
   message_retention_seconds  = 86400 # 1 day; short because Lambda consumes quickly
 

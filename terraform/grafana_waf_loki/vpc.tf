@@ -24,9 +24,9 @@ resource "aws_security_group" "alb" {
   tags = merge(var.tags, { Name = "${var.environment}-${local.app_name}-alb" })
 }
 
-resource "aws_security_group" "tasks" {
-  name        = "${var.environment}-${local.app_name}-tasks"
-  description = "ECS tasks: Grafana from ALB; Loki HTTP push from WAF Lambda"
+resource "aws_security_group" "grafana_tasks" {
+  name        = "${var.environment}-${local.app_name}-grafana-tasks"
+  description = "ECS Grafana tasks from ALB"
   vpc_id      = var.vpc_id
 
   ingress {
@@ -37,12 +37,35 @@ resource "aws_security_group" "tasks" {
     description     = "Grafana from ALB"
   }
 
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = merge(var.tags, { Name = "${var.environment}-${local.app_name}-grafana-tasks" })
+}
+
+resource "aws_security_group" "loki_tasks" {
+  name        = "${var.environment}-${local.app_name}-loki-tasks"
+  description = "ECS Loki tasks; accepts push from WAF worker"
+  vpc_id      = var.vpc_id
+
   ingress {
     from_port       = 3100
     to_port         = 3100
     protocol        = "tcp"
-    security_groups = [aws_security_group.waf_lambda.id]
-    description     = "Loki push from WAF Lambda"
+    security_groups = [aws_security_group.grafana_tasks.id]
+    description     = "Loki query from Grafana"
+  }
+
+  ingress {
+    from_port       = 3100
+    to_port         = 3100
+    protocol        = "tcp"
+    security_groups = [aws_security_group.waf_worker.id]
+    description     = "Loki push from WAF worker"
   }
 
   egress {
@@ -52,13 +75,13 @@ resource "aws_security_group" "tasks" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
-  tags = merge(var.tags, { Name = "${var.environment}-${local.app_name}-tasks" })
+  tags = merge(var.tags, { Name = "${var.environment}-${local.app_name}-loki-tasks" })
 }
 
-# WAF Lambda: egress-only (SQS, S3, Loki :3100 on the task ENI).
-resource "aws_security_group" "waf_lambda" {
-  name        = "${var.environment}-${local.app_name}-waf-lambda"
-  description = "WAF ingest Lambda ENIs (egress only)"
+# WAF worker: egress-only (SQS, S3, Loki :3100).
+resource "aws_security_group" "waf_worker" {
+  name        = "${var.environment}-${local.app_name}-waf-worker"
+  description = "WAF worker task ENIs (egress only)"
   vpc_id      = var.vpc_id
 
   egress {
@@ -68,5 +91,5 @@ resource "aws_security_group" "waf_lambda" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
-  tags = merge(var.tags, { Name = "${var.environment}-${local.app_name}-waf-lambda" })
+  tags = merge(var.tags, { Name = "${var.environment}-${local.app_name}-waf-worker" })
 }

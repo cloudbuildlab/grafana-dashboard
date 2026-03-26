@@ -3,8 +3,9 @@ terraform {
 
   required_providers {
     aws = {
-      source  = "hashicorp/aws"
-      version = ">= 4.0"
+      source = "hashicorp/aws"
+      # availability_zone_rebalancing on aws_ecs_service requires >= 5.77
+      version = ">= 5.77"
     }
     http = {
       source  = "hashicorp/http"

@@ -1,8 +1,13 @@
 import { GetObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { createRequire } from "node:module";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createGunzip } from "node:zlib";
+
+// geoip-lite is CommonJS; includes GeoLite-derived data (see package license / MaxMind attribution).
+const require = createRequire(import.meta.url);
+const geoip = require("geoip-lite");
 
 const s3 = new S3Client({});
 const LOKI_URL = process.env.LOKI_URL ?? "";
@@ -10,21 +15,63 @@ const LOKI_URL = process.env.LOKI_URL ?? "";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const centroids = JSON.parse(readFileSync(join(__dirname, "country-centroids.json"), "utf-8"));
 
-/** Stay under Loki body limits; WAF JSON lines can be large. */
-const MAX_BATCH_JSON_CHARS = 900_000;
+// Each push is kept small so concurrent Lambda invocations don't collectively exceed
+// Loki's default 4 MB/s ingestion rate limit. 200 KB × 10 concurrent = 2 MB/s peak.
+const MAX_BATCH_JSON_CHARS = 200_000;
 
-/** ISO 3166-1 alpha-2 → bbox-centre lat/lon for Grafana Geomap panels. */
-function enrichLineWithGeoCentroid(line) {
+/**
+ * AWS WAF log S3 layout:
+ * AWSLogs/<account-id>/WAFLogs/<region>/<web-acl-name>/year/month/day/hour/...
+ * The path segment after the region is the Web ACL name (e.g. "globe").
+ */
+function wafAclNameFromS3Key(key) {
+  const parts = key.split("/").filter((p) => p.length > 0);
+  const i = parts.indexOf("WAFLogs");
+  if (i < 0 || i + 2 >= parts.length) return "unknown";
+  const acl = parts[i + 2];
+  if (!acl || /^\d{4}$/.test(acl)) return "unknown";
+  return sanitizeLokiLabelValue(acl);
+}
+
+function sanitizeLokiLabelValue(v) {
+  const s = String(v).trim();
+  if (!s) return "unknown";
+  return s.replace(/[\n\r\t|"{}\x00]/g, "_").slice(0, 256);
+}
+
+/**
+ * Add GeoIP position from clientIp (Option A map) and WAF-country centroid (Option B aggregate map).
+ * Flatten clientIp + country for Grafana | json label extraction.
+ * @param {{ waf_acl?: string }} [meta] stream metadata echoed into JSON for dashboards
+ */
+function enrichLineWithGeo(line, meta = {}) {
   try {
     const obj = JSON.parse(line);
-    const raw = obj.httpRequest?.country;
-    if (typeof raw !== "string") return line;
-    const code = raw.trim().slice(0, 2).toUpperCase();
-    if (code.length !== 2) return line;
-    const c = centroids[code];
-    if (!c) return line;
-    obj.geo_lat = Number(c.lat.toFixed(5));
-    obj.geo_lon = Number(c.lon.toFixed(5));
+    const ip = typeof obj.httpRequest?.clientIp === "string" ? obj.httpRequest.clientIp.trim() : "";
+    const rawCountry = obj.httpRequest?.country;
+    const countryCode =
+      typeof rawCountry === "string" ? rawCountry.trim().slice(0, 2).toUpperCase() : "";
+
+    if (ip) {
+      const g = geoip.lookup(ip);
+      if (g?.ll?.length === 2) {
+        obj.geo_lat = Number(g.ll[0].toFixed(5));
+        obj.geo_lon = Number(g.ll[1].toFixed(5));
+      }
+      obj.clientIp = ip;
+    }
+
+    if (countryCode.length === 2) {
+      obj.country = countryCode;
+      const c = centroids[countryCode];
+      if (c && c.lat != null && c.lon != null) {
+        obj.country_lat = Number(c.lat.toFixed(5));
+        obj.country_lon = Number(c.lon.toFixed(5));
+      }
+    }
+
+    if (meta.waf_acl) obj.waf_acl = meta.waf_acl;
+
     return JSON.stringify(obj);
   } catch {
     return line;
@@ -91,8 +138,9 @@ async function ingestObject(bucket, key) {
   const lines = text.split("\n").filter((l) => l.trim());
   if (!lines.length) return;
 
+  const aclLabel = wafAclNameFromS3Key(key);
   const values = lines.map((line) => {
-    const enriched = enrichLineWithGeoCentroid(line);
+    const enriched = enrichLineWithGeo(line, { waf_acl: aclLabel });
     let tsNs = String(BigInt(Date.now()) * 1_000_000n);
     try {
       const obj = JSON.parse(enriched);
@@ -105,7 +153,7 @@ async function ingestObject(bucket, key) {
     return [tsNs, enriched];
   });
 
-  const labels = { source: "waf", bucket };
+  const labels = { source: "waf", bucket, waf_acl: aclLabel };
   for (const batch of chunkValues(values)) {
     await pushToLoki(batch, labels);
   }
@@ -132,15 +180,35 @@ function chunkValues(values) {
   return batches;
 }
 
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
 async function pushToLoki(values, labels) {
   const payload = { streams: [{ stream: labels, values }] };
-  const res = await fetch(LOKI_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  if (!res.ok) {
+  const body = JSON.stringify(payload);
+  const maxRetries = 4;
+  let delay = 1000;
+
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    const res = await fetch(LOKI_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body,
+    });
+    if (res.ok) return;
     const detail = await res.text();
+    // Loki rejects entries whose timestamps are older than its current ingestion window.
+    // These entries are permanently unrecoverable — treat as a silent skip rather than
+    // a failure so SQS does not waste retries cycling them through the DLQ.
+    if (res.status === 400 && detail.includes("entry too far behind")) {
+      console.warn(JSON.stringify({ msg: "Loki skipped stale entries (too far behind)", lines: values.length }));
+      return;
+    }
+    if (res.status === 429 && attempt < maxRetries) {
+      console.warn(JSON.stringify({ msg: "Loki 429 rate limit, retrying", attempt, delayMs: delay }));
+      await sleep(delay);
+      delay *= 2;
+      continue;
+    }
     throw new Error(`Loki push failed ${res.status}: ${detail.slice(0, 500)}`);
   }
 }

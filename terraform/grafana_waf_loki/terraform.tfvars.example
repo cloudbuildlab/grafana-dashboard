@@ -5,6 +5,29 @@ public_subnet_ids  = ["subnet-aaa", "subnet-bbb"]
 environment        = "dev"
 desired_count      = 1
 
+# Loki task sizing (OOM / exit 137 if too low). Defaults: cpu 2048, memory 3072 MiB.
+# ecs_task_cpu         = 2048
+# ecs_task_memory_mib  = 3072
+# Loki storage uses ECS-managed EBS per task. Increase size for higher retention.
+# loki_ebs_size_gb     = 20
+# loki_ebs_volume_type = "gp3"
+
+# Grafana task sizing (Grafana + Promtail). Defaults: 256 CPU, 512 MiB — fits on clusters
+# with limited spare capacity. Raise cpu to 512 if the dashboard renders slowly.
+# grafana_task_cpu         = 256
+# grafana_task_memory_mib  = 512
+
+# Deploy strategy: default ecs_stop_first_deployment = true (stop old task, then start new — fits one small EC2).
+# Zero-downtime rolling on a big cluster: ecs_stop_first_deployment = false, then e.g. min 100 / max 200.
+# ecs_stop_first_deployment              = true
+# ecs_deployment_minimum_healthy_percent = 100
+# ecs_deployment_maximum_percent         = 200
+# ecs_deployment_circuit_breaker_rollback = true
+# ecs_health_check_grace_period_seconds  = 300
+
+# Optional: set false to skip S3→Lambda→ECS rollout on bootstrap object changes (manual deploy only).
+# enable_bootstrap_roll_lambda = false
+
 # WAF log bucket — must already exist (and receive WAFv2 delivery if you use web_acl_arn).
 waf_logs_bucket_name   = "aws-waf-logs-your-account"
 waf_logs_prefix        = "AWSLogs/"
@@ -22,8 +45,21 @@ waf_logs_object_suffix = ".gz"
 # loki_image     = "grafana/loki:latest"
 # promtail_image = "grafana/promtail:latest"
 
+# WAF worker image (built in external repo: ~/workspace/platformfuzz/waf-log-worker-image)
+# waf_worker_image     = "123456789012.dkr.ecr.ap-southeast-2.amazonaws.com/waf-log-worker-image"
+# waf_worker_image_tag = "latest"
+# waf_worker_min_capacity             = 1
+# waf_worker_max_capacity             = 5
+# waf_worker_scale_messages_per_task  = 100
+
 # Optional: Grafana admin password in SSM (else admin/admin)
 # grafana_admin_password = "..."
+
+# Optional: quieter CloudWatch (defaults are already warn + no Grafana router HTTP logs)
+# grafana_log_level      = "error"
+# grafana_router_logging = false
+# loki_log_level         = "warn"
+# promtail_log_level     = "warn"
 
 tags = {
   Project = "grafana_waf_loki"

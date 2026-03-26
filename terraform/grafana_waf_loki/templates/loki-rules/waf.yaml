@@ -1,0 +1,11 @@
+groups:
+  - name: waf_uri
+    interval: 5m
+    rules:
+      - record: waf_uri_requests_total
+        expr: |
+          sum by (httpRequest_uri, bucket, waf_acl) (
+            count_over_time(
+              {source="waf"} | json | httpRequest_uri != "" [5m]
+            )
+          )

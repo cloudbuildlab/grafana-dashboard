@@ -22,7 +22,5 @@ resource "aws_service_discovery_service" "loki" {
     }
   }
 
-  health_check_custom_config {}
-
   tags = merge(var.tags, { Name = "${var.environment}-${local.app_name}-loki" })
 }
