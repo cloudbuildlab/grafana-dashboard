@@ -40,7 +40,9 @@ resource "aws_s3_object" "loki_local_config" {
 }
 
 # Loki recording rules — stored in S3 under loki/rules/fake/ (fake = no-auth tenant namespace).
-# The ruler evaluates waf_uri_requests_total every 5m so dashboards query pre-aggregated metrics.
+# The ruler evaluates WAF recording rules every 5m so dashboards query pre-aggregated metrics
+# (waf_action_requests_total, waf_terminating_rule_requests_total, waf_bucket_acl_requests_total,
+#  waf_method_requests_total, waf_client_ip_requests_total, waf_signal_sqli_requests_total, etc.).
 resource "aws_s3_object" "loki_rules_waf" {
   bucket       = aws_s3_bucket.bootstrap.id
   key          = "loki/rules/fake/waf.yaml"
@@ -135,6 +137,15 @@ resource "aws_s3_object" "dashboard_json" {
   source       = "${path.module}/templates/dashboards/${each.value}"
   content_type = "application/json"
   etag         = filemd5("${path.module}/templates/dashboards/${each.value}")
+}
+
+# Grafana alerting provisioning — SQLi signal alert rule.
+resource "aws_s3_object" "alerting_sqli" {
+  bucket       = aws_s3_bucket.bootstrap.id
+  key          = "grafana/alerting/sqli-alert.yaml"
+  content_type = "application/yaml"
+  source       = "${path.module}/templates/alerting/sqli-alert.yaml"
+  etag         = filemd5("${path.module}/templates/alerting/sqli-alert.yaml")
 }
 
 # Promtail config: scrapes ECS agent log files on the host.

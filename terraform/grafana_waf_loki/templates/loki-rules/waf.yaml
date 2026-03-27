@@ -2,10 +2,90 @@ groups:
   - name: waf_uri
     interval: 5m
     rules:
+      # request_url is set by the WAF worker (scheme + host + path + query); disambiguates same path on different hosts.
       - record: waf_uri_requests_total
         expr: |
-          sum by (httpRequest_uri, bucket, waf_acl) (
+          sum by (request_url, bucket, waf_acl) (
             count_over_time(
-              {source="waf"} | json | httpRequest_uri != "" [5m]
+              {source="waf"} | json | request_url != "" [5m]
+            )
+          )
+
+  - name: waf_action
+    interval: 5m
+    rules:
+      - record: waf_action_requests_total
+        expr: |
+          sum by (action, bucket, waf_acl) (
+            count_over_time(
+              {source="waf"} | json | action != "" [5m]
+            )
+          )
+
+  - name: waf_terminating_rule
+    interval: 5m
+    rules:
+      - record: waf_terminating_rule_requests_total
+        expr: |
+          sum by (terminatingRuleId, bucket, waf_acl) (
+            count_over_time(
+              {source="waf"} | json | terminatingRuleId != "" [5m]
+            )
+          )
+
+  - name: waf_volume
+    interval: 5m
+    rules:
+      - record: waf_bucket_acl_requests_total
+        expr: |
+          sum by (bucket, waf_acl) (
+            count_over_time(
+              {source="waf"} | json [5m]
+            )
+          )
+
+  - name: waf_method
+    interval: 5m
+    rules:
+      - record: waf_method_requests_total
+        expr: |
+          sum by (method, bucket, waf_acl) (
+            count_over_time(
+              {source="waf"} | json
+                | regexp `"httpMethod":"(?P<method>[A-Z]+)"`
+                | method != "" [5m]
+            )
+          )
+
+  # Capped high-cardinality: top 500 client IPs per evaluation.
+  # Only the top N IPs are recorded each 5m; long-range PromQL queries are
+  # bounded but not exact for IPs outside the cap. Use Loki LogQL for forensic
+  # detail on specific IPs or short-window drill-down.
+  - name: waf_client_ip
+    interval: 5m
+    rules:
+      - record: waf_client_ip_requests_total
+        expr: |
+          topk(500,
+            sum by (clientIp, bucket, waf_acl) (
+              count_over_time(
+                {source="waf"} | json | clientIp != "" [5m]
+              )
+            )
+          )
+
+  # SQLi signal: counts lines where the terminatingRuleId contains "SQLi"
+  # (case-sensitive substring match). Adjust the filter to match your actual
+  # WAF rule naming convention.
+  - name: waf_signal
+    interval: 5m
+    rules:
+      - record: waf_signal_sqli_requests_total
+        expr: |
+          sum by (bucket, waf_acl) (
+            count_over_time(
+              {source="waf"} | json
+                | terminatingRuleId =~ ".*SQLi.*"
+                [5m]
             )
           )

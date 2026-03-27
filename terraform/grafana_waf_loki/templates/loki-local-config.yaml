@@ -18,10 +18,22 @@ common:
       store: inmemory
 
 limits_config:
-  max_query_series: 500000
+  # Guardrail against high-cardinality query explosions (major OOM trigger).
+  max_query_series: 100000
   metric_aggregation_enabled: true
   # Default 1m is too low for heavy metric queries over WAF volume; avoids abrupt cancel mid-response.
   query_timeout: 10m
+  # Reduce per-query fan-out and split long ranges into smaller chunks to lower peak memory.
+  max_query_parallelism: 4
+  tsdb_max_query_parallelism: 16
+  split_queries_by_interval: 30m
+  # Protect Loki from very large line-returning queries in Explore/log panels.
+  max_entries_limit_per_query: 5000
+  # Default per-stream limit is ~3MB/s. One WAF stream (bucket + waf_acl + source) can exceed that
+  # during bursts even when global distributor limits allow more — 429 "Per stream rate limit exceeded".
+  # Align with distributor ingestion caps in ecs.tf (-distributor.ingestion-rate-limit-mb).
+  per_stream_rate_limit: 16777216
+  per_stream_rate_limit_burst: 33554432
 
 schema_config:
   configs:

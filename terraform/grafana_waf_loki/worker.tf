@@ -28,12 +28,21 @@ resource "aws_ecs_task_definition" "waf_worker" {
         { name = "AWS_REGION", value = data.aws_region.current.region },
         { name = "SQS_QUEUE_URL", value = aws_sqs_queue.waf_ingest.url },
         { name = "LOKI_URL", value = local.loki_push_url },
+        { name = "HEALTH_LISTEN_ADDR", value = "0.0.0.0:8080" },
         { name = "WORKER_CONCURRENCY", value = "2" },
         { name = "POLL_WAIT_SECONDS", value = "20" },
         { name = "POLL_MAX_MESSAGES", value = "10" },
         { name = "WAF_ACL_ALLOWLIST", value = "" },
         { name = "WAF_ACTION_ALLOWLIST", value = "" },
       ]
+      portMappings = [{ containerPort = 8080, protocol = "tcp" }]
+      healthCheck = {
+        command     = ["CMD", var.waf_worker_health_binary_path, "probe"]
+        interval    = 30
+        timeout     = 5
+        retries     = 3
+        startPeriod = 90
+      }
       logConfiguration = {
         logDriver = "awslogs"
         options = {

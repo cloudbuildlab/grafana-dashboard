@@ -15,7 +15,7 @@ Terraform stack in the same shape as [grafana_base](../grafana_base/README.md): 
 - **Loki**: Uses an **ECS-managed EBS volume** per task (configured at service deployment). This avoids consuming container instance root disk for Loki data. Tune with `loki_ebs_size_gb` and `loki_ebs_volume_type`.
 - **Bootstrap**: Task-scoped Docker volumes + `public.ecr.aws/aws-cli/aws-cli` sync from the created bootstrap bucket (Grafana datasources/dashboards, Promtail config). Task role has `s3:GetObject` / `ListBucket` on that bucket only.
 - **Bootstrap roll Lambda** (optional, default on): Python 3.14, **not** in a VPC. On `s3:ObjectCreated:*` in the bootstrap bucket it calls `ecs:UpdateService` with `forceNewDeployment` for both `grafana` and `loki` services so provisioning sync is re-run after bootstrap object changes.
-- **WAF worker**: External image supplied by `waf_worker_image` and `waf_worker_image_tag` (recommended source repo: `~/workspace/platformfuzz/waf-log-worker-image`). Worker is VPC-attached, polls SQS, reads WAF objects from S3, and pushes streams to Loki using `bucket` and `waf_acl` labels.
+- **WAF worker**: External image supplied by `waf_worker_image` and `waf_worker_image_tag` (recommended source repo: `~/workspace/platformfuzz/waf-log-worker-image`). Worker is VPC-attached, polls SQS, reads WAF objects from S3, and pushes streams to Loki using `bucket` and `waf_acl` labels. Rebuild and redeploy that image after syncing `lambda/waf/index.mjs` from this repo so each log line includes **`request_url`** (full URL from Host + uri + args); the **WAF Top URLs** dashboard and `waf_uri_requests_total` rule aggregate on that field.
 - **Secrets**: Optional Grafana admin password in SSM — same as `grafana_base`.
 
 ## Prerequisites

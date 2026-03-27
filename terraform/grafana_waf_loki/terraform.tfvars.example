@@ -48,6 +48,7 @@ waf_logs_object_suffix = ".gz"
 # WAF worker image (built in external repo: ~/workspace/platformfuzz/waf-log-worker-image)
 # waf_worker_image     = "123456789012.dkr.ecr.ap-southeast-2.amazonaws.com/waf-log-worker-image"
 # waf_worker_image_tag = "latest"
+# waf_worker_health_binary_path = "/ko-app/waf-worker" # ko: binary basename matches cmd dir; override if your build differs
 # waf_worker_min_capacity             = 1
 # waf_worker_max_capacity             = 5
 # waf_worker_scale_messages_per_task  = 100

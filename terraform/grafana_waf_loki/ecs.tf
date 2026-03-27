@@ -91,7 +91,7 @@ resource "aws_ecs_task_definition" "loki" {
 
   # Loki persistence is provided at service deployment via ECS-managed EBS.
   volume {
-    name              = "loki-data"
+    name                = "loki-data"
     configure_at_launch = true
   }
 
@@ -135,7 +135,7 @@ resource "aws_ecs_service" "grafana" {
     container_port   = var.grafana_port
   }
 
-  # Deterministic rollout when provisioned S3 content changes (dashboards/datasources/promtail).
+  # Deterministic rollout when provisioned S3 content changes (dashboards/datasources/promtail/alerting).
   # This avoids relying solely on S3->Lambda event timing for dashboard refresh.
   force_new_deployment = true
   triggers = {
@@ -144,6 +144,7 @@ resource "aws_ecs_service" "grafana" {
       aws_s3_object.datasource_loki_prom.etag,
       aws_s3_object.dashboard_provider.etag,
       aws_s3_object.promtail_config.etag,
+      aws_s3_object.alerting_sqli.etag,
     ]))
   }
 

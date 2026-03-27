@@ -172,7 +172,7 @@ variable "web_acl_arn" {
 }
 
 variable "waf_worker_image" {
-  description = "Container image repository for the WAF worker (for example account.dkr.ecr.region.amazonaws.com/waf-log-worker-image)."
+  description = "Container image for the WAF worker (e.g. ghcr.io/.../waf-log-worker-image). Must include logic that adds request_url (scheme+host+path+query) to each JSON line before push — see lambda/waf/index.mjs in this repo for the reference implementation."
   type        = string
 }
 
@@ -180,6 +180,12 @@ variable "waf_worker_image_tag" {
   description = "Container image tag for the WAF worker."
   type        = string
   default     = "latest"
+}
+
+variable "waf_worker_health_binary_path" {
+  description = "Absolute path to the worker binary inside the ko-built image (ECS healthCheck CMD). ko places cmd/waf-worker at /ko-app/waf-worker (directory is /ko-app, not the binary)."
+  type        = string
+  default     = "/ko-app/waf-worker"
 }
 
 variable "waf_worker_min_capacity" {

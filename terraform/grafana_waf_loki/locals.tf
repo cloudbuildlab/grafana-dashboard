@@ -32,6 +32,7 @@ set -e
 aws s3 sync "s3://${aws_s3_bucket.bootstrap.id}/grafana/datasources/" "/grafana-data/provisioning/datasources/"
 aws s3 cp "s3://${aws_s3_bucket.bootstrap.id}/grafana/dashboards/provider.yaml" "/grafana-data/provisioning/dashboards/provider.yaml"
 aws s3 sync "s3://${aws_s3_bucket.bootstrap.id}/grafana/dashboards/" "/grafana-data/provisioning/dashboards/waf/" --exclude "provider.yaml" --delete
+aws s3 sync "s3://${aws_s3_bucket.bootstrap.id}/grafana/alerting/" "/grafana-data/provisioning/alerting/" --delete
 aws s3 cp "s3://${aws_s3_bucket.bootstrap.id}/promtail/config.yaml" "/p/config.yaml"
 EOT
 
@@ -102,10 +103,10 @@ EOT
     command = [
       "-config.file=/loki/config/local-config.yaml",
       "-log.level=${var.loki_log_level}",
-      # Internal querier→frontend gRPC is capped at 4 MB by default; WAF log query results
-      # exceed that when the dashboard requests thousands of lines. Raise to 32 MB.
-      "-server.grpc-max-recv-msg-size-bytes=33554432",
-      "-server.grpc-max-send-msg-size-bytes=33554432",
+      # Internal querier→scheduler gRPC defaults ~4–100MB; heavy query_range (WAF dashboards)
+      # can exceed 150MB → 413 / broken pipe. Cap at 512 MiB.
+      "-server.grpc-max-recv-msg-size-bytes=536870912",
+      "-server.grpc-max-send-msg-size-bytes=536870912",
       # TopK metric queries use a count-min-sketch heap; default 10k caps cardinality there.
       "-querier.engine.max-count-min-sketch-heap-size=500000",
       # Heavy query_range responses exceed defaults (read/write 30s, querier backend 1m) → client EOF.
@@ -113,6 +114,8 @@ EOT
       "-server.http-write-timeout=10m",
       "-server.http-idle-timeout=15m",
       "-querier.query-timeout=10m",
+      # Single Loki task: keep concurrent in-flight queries low to prevent memory spikes/OOM (exit 137).
+      "-querier.max-concurrent=2",
       # max_query_series / query_timeout also in /loki/config/local-config.yaml (S3 + bootstrap).
       # Default per-tenant ingestion rate is 4 MB/s. Lambda concurrency is capped at 5
       # (≈1 MB/s combined), but raise the Loki limit to 16 MB/s as a safety buffer
@@ -128,8 +131,16 @@ EOT
         "awslogs-stream-prefix" = "ecs"
       }
     }
-    # No container healthCheck: grafana/loki is distroless (no /bin/sh, curl). Grafana/Promtail use
-    # dependsOn START (not HEALTHY): ECS rejects HEALTHY without a configured health check on Loki.
+    # Distroless image: no shell/curl for CMD-SHELL. CMD form runs /usr/bin/loki -version (exits 0,
+    # does not start a second server) so ECS shows HEALTHY instead of UNKNOWN. For HTTP readiness use
+    # an NLB/ALB target check or a sidecar that hits http://127.0.0.1:3100/ready.
+    healthCheck = {
+      command     = ["CMD", "/usr/bin/loki", "-version"]
+      interval    = 30
+      timeout     = 5
+      retries     = 3
+      startPeriod = 120
+    }
   }
 
   container_grafana = {

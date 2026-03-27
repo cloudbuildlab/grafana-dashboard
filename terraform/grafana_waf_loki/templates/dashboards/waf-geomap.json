@@ -40,6 +40,22 @@
         "current": { "selected": true, "text": "All", "value": "$__all" },
         "hide": 0,
         "skipUrlSync": false
+      },
+      {
+        "name": "top_ip_n",
+        "label": "Top IPs",
+        "type": "custom",
+        "query": "10,20,50",
+        "options": [
+          { "selected": true, "text": "10", "value": "10" },
+          { "selected": false, "text": "20", "value": "20" },
+          { "selected": false, "text": "50", "value": "50" }
+        ],
+        "current": { "selected": true, "text": "10", "value": "10" },
+        "hide": 0,
+        "includeAll": false,
+        "multi": false,
+        "skipUrlSync": false
       }
     ]
   },
@@ -64,7 +80,7 @@
           "refId": "A",
           "datasource": { "type": "loki", "uid": "loki" },
           "editorMode": "code",
-          "expr": "topk(500, sum by (clientIp, country, geo_lat, geo_lon) (count_over_time({source=\"waf\", bucket=~\"${bucket:regex}\"} | json | waf_acl=~\"${waf_acl:regex}\" | clientIp != \"\" | country != \"\" | geo_lat != \"\" | geo_lon != \"\" [15m])))",
+          "expr": "topk(500, sum by (clientIp, country, geo_lat, geo_lon) (count_over_time({source=\"waf\", bucket=~\"${bucket:regex}\"} | json | waf_acl=~\"${waf_acl:regex}\" | clientIp != \"\" | country != \"\" | geo_lat != \"\" | geo_lon != \"\" [$__range])))",
           "queryType": "instant",
           "legendFormat": ""
         }
@@ -146,7 +162,7 @@
           "refId": "A",
           "datasource": { "type": "loki", "uid": "loki" },
           "editorMode": "code",
-          "expr": "topk(150, sum by (country, country_lat, country_lon) (count_over_time({source=\"waf\", bucket=~\"${bucket:regex}\"} | json | waf_acl=~\"${waf_acl:regex}\" | country != \"\" | country_lat != \"\" | country_lon != \"\" [15m])))",
+          "expr": "topk(150, sum by (country, country_lat, country_lon) (count_over_time({source=\"waf\", bucket=~\"${bucket:regex}\"} | json | waf_acl=~\"${waf_acl:regex}\" | country != \"\" | country_lat != \"\" | country_lon != \"\" [$__range])))",
           "queryType": "instant",
           "legendFormat": ""
         }
@@ -217,7 +233,7 @@
     {
       "id": 3,
       "type": "table",
-      "title": "Top IP | country",
+      "title": "Top IP",
       "gridPos": { "h": 11, "w": 12, "x": 12, "y": 12 },
       "datasource": { "type": "loki", "uid": "loki" },
       "targets": [
@@ -225,7 +241,7 @@
           "refId": "A",
           "datasource": { "type": "loki", "uid": "loki" },
           "editorMode": "code",
-          "expr": "topk(25, sum by (clientIp, country) (count_over_time({source=\"waf\", bucket=~\"${bucket:regex}\"} | json | waf_acl=~\"${waf_acl:regex}\" | clientIp != \"\" | country != \"\" [15m])))",
+          "expr": "topk(${top_ip_n}, sum by (clientIp, country) (count_over_time({source=\"waf\", bucket=~\"${bucket:regex}\"} | json | waf_acl=~\"${waf_acl:regex}\" | clientIp != \"\" | country != \"\" [$__range])))",
           "queryType": "instant",
           "legendFormat": ""
         }
@@ -262,16 +278,49 @@
           "options": { "mode": "columns" }
         },
         {
+          "id": "groupBy",
+          "options": {
+            "fields": {
+              "clientIp": { "operation": "groupby" },
+              "country": { "operation": "groupby" },
+              "Value": {
+                "operation": "aggregate",
+                "aggregations": ["max"]
+              }
+            }
+          }
+        },
+        {
           "id": "organize",
           "options": {
             "excludeByName": { "Time": true },
             "indexByName": {
               "clientIp": 0,
               "country": 1,
-              "Value": 2
+              "Value (max)": 2
             },
-            "renameByName": { "Value": "hits" }
+            "renameByName": {
+              "clientIp": "Client IP",
+              "country": "Country",
+              "Value (max)": "hits",
+              "Value": "hits",
+              "Value #A": "hits"
+            }
           }
+        },
+        {
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "sortBy",
+          "options": {
+            "sort": [{ "field": "hits", "desc": true }]
+          }
+        },
+        {
+          "id": "limit",
+          "options": { "limitField": "${top_ip_n}" }
         }
       ]
     }

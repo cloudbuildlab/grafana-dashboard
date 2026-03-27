@@ -39,6 +39,34 @@ function sanitizeLokiLabelValue(v) {
   return s.replace(/[\n\r\t|"{}\x00]/g, "_").slice(0, 256);
 }
 
+/** Read a single header from WAF httpRequest.headers[{name,value}, ...]. */
+function headerValue(headers, name) {
+  if (!Array.isArray(headers)) return "";
+  const want = name.toLowerCase();
+  const h = headers.find((x) => x?.name && String(x.name).toLowerCase() === want);
+  return typeof h?.value === "string" ? h.value.trim() : "";
+}
+
+/**
+ * Full URL for dashboards (host disambiguates same path on different origins).
+ * Uses Host + x-forwarded-proto (default https) + uri + optional args (query string).
+ */
+function buildRequestUrl(obj) {
+  const hr = obj.httpRequest;
+  if (!hr || typeof hr !== "object") return "";
+  const uri = typeof hr.uri === "string" ? hr.uri.trim() : "";
+  if (!uri) return "";
+  const path = uri.startsWith("/") ? uri : `/${uri}`;
+  const args = typeof hr.args === "string" && hr.args.length > 0 ? hr.args : "";
+  const qs = args ? `?${args}` : "";
+  const host = headerValue(hr.headers, "host");
+  let scheme = headerValue(hr.headers, "x-forwarded-proto") || "https";
+  if (!/^https?$/i.test(scheme)) scheme = "https";
+  scheme = scheme.toLowerCase();
+  if (!host) return `${path}${qs}`;
+  return `${scheme}://${host}${path}${qs}`;
+}
+
 /**
  * Add GeoIP position from clientIp (Option A map) and WAF-country centroid (Option B aggregate map).
  * Flatten clientIp + country for Grafana | json label extraction.
@@ -71,6 +99,9 @@ function enrichLineWithGeo(line, meta = {}) {
     }
 
     if (meta.waf_acl) obj.waf_acl = meta.waf_acl;
+
+    const requestUrl = buildRequestUrl(obj);
+    if (requestUrl) obj.request_url = requestUrl;
 
     return JSON.stringify(obj);
   } catch {

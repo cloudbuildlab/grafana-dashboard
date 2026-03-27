@@ -1,0 +1,54 @@
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: WAF Security Signals
+    folder: WAF
+    interval: 5m
+    rules:
+      - uid: waf-sqli-alert
+        title: "WAF SQLi detections"
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: loki-prometheus
+            model:
+              expr: "sum(increase(waf_signal_sqli_requests_total[10m]))"
+              instant: false
+              range: true
+              refId: A
+          - refId: C
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator:
+                    params:
+                      - 0
+                    type: gt
+                  operator:
+                    type: and
+                  query:
+                    params:
+                      - A
+                  reducer:
+                    params: []
+                    type: last
+              refId: C
+              type: classic_conditions
+        noDataState: OK
+        execErrState: Alerting
+        for: 5m
+        annotations:
+          summary: "WAF SQLi rule fired — {{ $value }} matches in the last 10m."
+          description: >-
+            The waf_signal_sqli_requests_total recording rule detected SQL injection
+            attempts blocked by WAF. Check the WAF Logs dashboard for details.
+        labels:
+          severity: warning
+          source: waf

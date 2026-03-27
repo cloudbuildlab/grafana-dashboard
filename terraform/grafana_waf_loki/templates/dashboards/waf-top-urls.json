@@ -1,9 +1,9 @@
 {
   "id": null,
-  "title": "WAF top URLs",
+  "title": "WAF Top URLs",
   "uid": "waf-top-urls",
   "schemaVersion": 39,
-  "version": 1,
+  "version": 8,
   "refresh": "5m",
   "time": {
     "from": "now-1h",
@@ -25,7 +25,7 @@
         "sort": 1,
         "multi": true,
         "includeAll": true,
-        "allValue": ".*",
+        "allValue": ".+",
         "current": {
           "selected": true,
           "text": "All",
@@ -37,7 +37,7 @@
       {
         "name": "waf_acl",
         "label": "Web ACL",
-        "description": "Matches JSON field waf_acl (Lambda). Same as WAF overview dashboard.",
+        "description": "Matches JSON field waf_acl after | json.",
         "type": "query",
         "datasource": {
           "type": "loki",
@@ -60,7 +60,7 @@
       },
       {
         "name": "top_n",
-        "label": "Top N URLs",
+        "label": "Top URLs",
         "type": "custom",
         "query": "10,20,50",
         "options": [
@@ -96,8 +96,8 @@
     {
       "id": 1,
       "type": "table",
-      "title": "Top requested paths (httpRequest.uri)",
-      "description": "Counts unique URI paths over the selected time range via LogQL metric query.",
+      "title": "Top requested full URLs (request_url)",
+      "description": "Uses recording rule metric `waf_uri_requests_total` (derived from JSON request_url) for lower query cost than raw log scans.",
       "gridPos": {
         "h": 14,
         "w": 24,
@@ -116,10 +116,10 @@
             "uid": "loki"
           },
           "editorMode": "code",
-          "expr": "topk(${top_n}, sum by (httpRequest_uri) (count_over_time({source=\"waf\", bucket=~\"${bucket:regex}\"} | json | waf_acl=~\"${waf_acl:regex}\" | httpRequest_uri != \"\" [5m])))",
+          "expr": "topk(${top_n}, sum by (request_url) (sum_over_time(waf_uri_requests_total{bucket=~\"${bucket:regex}\", waf_acl=~\"${waf_acl:regex}\", request_url!=\"\"}[$__range])))",
           "queryType": "instant",
-          "format": "time_series",
-          "legendFormat": "{{httpRequest_uri}}"
+          "instant": true,
+          "legendFormat": ""
         }
       ],
       "fieldConfig": {
@@ -144,63 +144,43 @@
         },
         "overrides": [
           {
-            "matcher": {
-              "id": "byName",
-              "options": "Requests"
-            },
+            "matcher": { "id": "byName", "options": "Requests" },
             "properties": [
-              {
-                "id": "custom.width",
-                "value": 120
-              },
-              {
-                "id": "custom.cellOptions",
-                "value": {
-                  "type": "color-background",
-                  "mode": "basic"
-                }
-              }
+              { "id": "custom.align", "value": "right" },
+              { "id": "custom.width", "value": 140 }
             ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Full URL" },
+            "properties": [{ "id": "custom.align", "value": "left" }]
           }
         ]
       },
       "transformations": [
         {
-          "id": "seriesToRows",
-          "options": {}
-        },
-        {
-          "id": "groupBy",
-          "options": {
-            "fields": {
-              "Metric": {
-                "operation": "groupby"
-              },
-              "Value": {
-                "operation": "aggregate",
-                "aggregations": [
-                  "sum"
-                ]
-              }
-            }
-          }
+          "id": "labelsToFields",
+          "options": { "mode": "columns" }
         },
         {
           "id": "organize",
           "options": {
-            "excludeByName": {
-              "Time": true
-            },
+            "excludeByName": { "Time": true },
             "indexByName": {
-              "Metric": 0,
-              "Value (sum)": 1
+              "request_url": 0,
+              "Value #A": 1,
+              "Value": 1
             },
             "renameByName": {
-              "Metric": "Path",
-              "Value (sum)": "Requests",
-              "Value": "Requests",
-              "Value #A": "Requests"
+              "request_url": "Full URL",
+              "Value #A": "Requests",
+              "Value": "Requests"
             }
+          }
+        },
+        {
+          "id": "sortBy",
+          "options": {
+            "sort": [{ "field": "Requests", "desc": true }]
           }
         }
       ],
